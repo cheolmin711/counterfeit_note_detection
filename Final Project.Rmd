@@ -1,0 +1,614 @@
+---
+title: "Final Report"
+author: "Cheolmin Hwang"
+date: "3/11/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Introduction
+In the final project for Math 189, we will analyze  the Swiss bank notes dataset. The objective is to answer the question: Can we predit whether a note is false or counterfeit using supervised learning? We will attempt to answer this question by using techniques and tools learned from lectures 13 through 24. We will implement K-fold cross-validation method. On each fold, we will train Linear Discriminant Analysis (LDA) classifier and logistic regression classifier and look at their accuracies for each fold to decided on a better method of classification. After that, we will repeat the K-fold cross-validation on the dataset that has been preprocessed: factor analysis through maximum likelihood estimation and see its effects on the accuracies of the two models in each fold of the cross-validation.
+
+# Body
+## Data
+The dataset was acquired from the course repository (https://github.com/tuckermcelroy/ma189/blob/main/Data/SBN.txt), which was originally extracted from Flury, B. and Riedwyl, H. (1988). Multivariate Statistics: A practical approach. London: Chapman & Hall, Tables 1.1 and 1.2, pp. 5-8.
+
+In our data, we have a total of 200 observations of old 1000-franc Swiss bank notes, where 100 of them are genuine Swiss bank notes and the other 100 are counterfeit. Each observation contains six variables measured of the bank notes:
+
+1. Length of the note
+2. Width of the Left-Hand side of the note
+3. Width of the Right-Hand side of the note
+4. Width of the Bottom Margin
+5. Width of the Top Margin
+6. Diagonal Length of Printed Area
+
+```{r}
+notes <- read.table('C:\\Users\\cheol\\Repository\\ma189\\Data\\SBN.txt')
+colnames(notes) <- c('Length', 'Left', 'Right', 'Bottom Margin', 'Top Margin', 'Diagonal')
+head(notes)
+```
+*Source*: Flury, B. and Riedwyl, H. (1988). Multivariate Statistics: A practical approach. London: Chapman & Hall, Tables 1.1 and 1.2, pp. 5-8.
+
+We know from lecture that observations with index BN1 to BN100 are genuine banknotes and that observations with index BN101 to 200 are counterfeit banknotes. So we can divide them and show separate basic statistics and visualizations separately.We will divide the dataset into genuine bank notes and counterfeit bank notes.
+
+Here are the sample means and variance matrices of each genuine bank notes and counterfeit bank notes:
+
+```{r}
+genuine_sbn <- notes[1:100,]
+counterfeit_sbn <- notes[101:200,]
+
+sbn_mat <- cbind(colMeans(genuine_sbn), colMeans(counterfeit_sbn))
+colnames(sbn_mat) <- c("Genuine Sample Mean","Counterfeit Sample Mean")
+sbn_mat
+```
+
+```{r}
+var(notes[1:100,])
+```
+```{r}
+var(notes[101:200,])
+```
+
+To show and indication for whether an observation is of a genuine bank note or a counterfeit bank note, we will add a column for indication.
+
+```{r}
+Indicator <- c()
+
+for(count in 1:100){
+  Indicator <- c(Indicator, 'genuine')
+}
+
+for(count in 1:100){
+  Indicator <- c(Indicator, 'counterfeit')
+}
+
+notes_indc <- cbind(notes, Indicator)
+head(notes_indc)
+```
+
+Here are the comparisons between the two groups visualized:
+
+```{r}
+boxplot(notes_indc$Length ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Length')
+title('Boxplot of Length by Genuineness')
+```
+We can observe that the Length of geuine notes is slightly higher.
+
+```{r}
+boxplot(notes_indc$Left ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Left Margin')
+title('Boxplot of Left Margin Length by Genuineness')
+```
+
+From this we can observe that the length of the left margin is much shorter for genuine bank notes, and longer for the counterfeit notes.
+
+```{r}
+boxplot(notes_indc$Right ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Right Margin')
+title('Boxplot of Right Margin Length by Genuineness')
+```
+
+From this we can observe again that the length of the right margin is much shorter for genuine bank notes, and longer for the counterfeit notes.
+
+```{r}
+boxplot(notes_indc$`Bottom Margin` ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Bottom Margin Length')
+title('Boxplot of Bottom Margin Length by Genuineness')
+```
+
+From this we can observe similarly that the length of the bottom margin is much shorter for genuine bank notes, and longer for the counterfeit notes.
+
+```{r}
+boxplot(notes_indc$`Top Margin` ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Top Margin Length')
+title('Boxplot of Top Margin Length by Genuineness')
+```
+
+From this we can observe that the length of the top margin is slightly, but noticeably shorter for genuine bank notes, and longer for the counterfeit notes.
+
+```{r}
+boxplot(notes_indc$Diagonal ~ notes_indc$Indicator, xlab = 'Genuineness', ylab = 'Diagonal Length')
+title('Boxplot of Diagonal Length by Genuineness')
+```
+
+However, from this we can observe that the length of the diagonal is significantly longer for genuine bank notes, and much shorter for counterfeit notes.
+
+From the above visualizations, we may gain insight to developing a model to distinguish between the counterfeit and geunine bank notes using these attributes of each group.
+
+We can also visualize the correlation between attributes:
+
+```{r}
+library(lattice)
+library(ellipse)
+
+cor_df <- cor(notes)
+
+# Function to generate correlation plot
+panel.corrgram <- function(x, y, z, subscripts, at, level = 0.9, label = FALSE, ...) {
+     require("ellipse", quietly = TRUE)
+     x <- as.numeric(x)[subscripts]
+     y <- as.numeric(y)[subscripts]
+     z <- as.numeric(z)[subscripts]
+     zcol <- level.colors(z, at = at,  ...)
+     for (i in seq(along = z)) {
+         ell=ellipse(z[i], level = level, npoints = 50, 
+                     scale = c(.2, .2), centre = c(x[i], y[i]))
+         panel.polygon(ell, col = zcol[i], border = zcol[i], ...)
+     }
+     if (label)
+         panel.text(x = x, y = y, lab = 100 * round(z, 2), cex = 0.8,
+                    col = ifelse(z < -1, "white", "black"))
+ }
+
+# generate correlation plot
+print(levelplot(cor_df[seq(6,1), seq(6,1)], at = do.breaks(c(-1.01, 1.01), 20),
+           xlab = NULL, ylab = NULL, colorkey = list(space = "top"), col.regions=rev(heat.colors(100)),
+           scales = list(x = list(rot = 90)),
+           panel = panel.corrgram, label = TRUE))
+```
+The level plot above shows us the correlation between variables through the use of hue and shape, darker colors and narrower ovals indicating stronger correlations between the corresponding two variables. By looking at the level plot it appears that the length of the Left margin and the length of the Right margin are strongly correlated. We can also observe that the attribute paris length of the bottom margin and length of the right margin are some what correlated, and so are left margin & bottom margin, right margin & top margin, and top margin & left margin pairs as well. We can also observe that the Diagonal attribute, with the exception of the length attribute, is negatively correlated with all other attributes. The Length attribute seems to show very liitle correlation with all other attributes.
+
+From this, we can gain intuition for factor analysis that some attributes may be redundant or some attributes may not be contributing to the decision of genuineness of a bank note.
+
+## Analysis
+### Assumptions
+There are some assumptions that have to be make before the analysis.
+
+For our Linear Discriminant Analysis we make the following assumptions:
+
+1. The data from group $k$ has common mean vector $\underline{\mu}^{(k)}$, i.e., 
+\[
+  {\mathbb E} [ x_{ij}^{(k)} ] = \underline{\mu}_j^{(k)}.
+\]
+There were no inconsistencies when selecting observations from each group of genuinity.
+
+2. Homoskedasticity: The data from all groups have common covariance matrix ${\mathbf \Sigma}$, i.e.,
+\[
+  {\mathbf \Sigma} = \mbox{Cov} [ \underline{x}_i^{(k)}, \underline{x}_i^{(k)}]
+\]
+```{r}
+cov(x = notes, y = notes)
+```
+
+ 
+3. Independence: The observations are independently sampled.
+4. Normality: The data are multivariate normally distributed.
+
+Quantile-Quantile Plot for Length
+```{r}
+library('car')
+qqnorm(notes$Length, pch = 1, frame = FALSE)
+qqline(notes$Length, col = "steelblue", lwd = 2)
+```
+
+Quantile-Quantile Plot for Left Margin
+```{r}
+library('car')
+qqnorm(notes$Left, pch = 1, frame = FALSE)
+qqline(notes$Left, col = "steelblue", lwd = 2)
+```
+
+Quantile-Quantile Plot for Right Margin
+```{r}
+library('car')
+qqnorm(notes$Right, pch = 1, frame = FALSE)
+qqline(notes$Right, col = "steelblue", lwd = 2)
+```
+
+Quantile-Quantile Plot for Bottom Margin
+```{r}
+library('car')
+qqnorm(notes$`Bottom Margin`, pch = 1, frame = FALSE)
+qqline(notes$`Bottom Margin`, col = "steelblue", lwd = 2)
+```
+
+Quantile-Quantile Plot for Top Margin
+```{r}
+library('car')
+qqnorm(notes$`Top Margin`, pch = 1, frame = FALSE)
+qqline(notes$`Top Margin`, col = "steelblue", lwd = 2)
+```
+
+Quantile-Quantile Plot for Diagonal
+```{r}
+library('car')
+qqnorm(notes$Diagonal, pch = 1, frame = FALSE)
+qqline(notes$Diagonal, col = "steelblue", lwd = 2)
+```
+
+For our Logistic Regression we make the following assumption:
+
+${\mathbf P} [ y_i=1 \vert x_i] = p(x_i)$ and ${\mathbf P} [ y_i=0 \vert x_i] = 1-p(x_i)$. 
+
+For our Maximum Likelihood Estimator wemake the following assumption:
+
+The dataset is independently sampled from a multivariate normal distribution, which allows for the establishment of the likelihood function for the factor model.
+
+```{r}
+n_factors <- 2
+fa_fit <-factanal(notes, n_factors, rotation = 'varimax')
+loading <- fa_fit$loadings[,1:2]
+t(loading)
+```
+
+Not an assumption, but a caveat for K-fold cross-validation is:
+
+1. K-fold cross-validation with K < n has a smaller variance than Leave-one-out cross-validation. We are averaging the outputs of K fitted models that are somewhat less correlated with each other, since the overlap between the training sets in each model is smaller.
+
+2. Performing K-fold cross-validation will lead to an intermediate level of bias compared to Leave-one-out cross-validation. Each training set contains (K−1)n/K observations; fewer than in the LOOCV approach, but substantially more than in the validation set approach.
+
+Given these considerations, we will make the choice of k = 10 to yield test error estimates that suffer neither from excessively high bias nor from very high variance.
+
+
+
+### K-fold cross-validation
+We will perform K-fold cross-validation. For each fold, we will use both Linear discriminant analysis (LDA) and logistic regression for classification. We use LDA because it is a supervised classification tool with an objective to solve classification problems when the groups are know as a priori, which is used to predict the group membership of an observation, which in this case would be the group of genuine notes and group of counterfeit notes. We use Logistic Regression because we wish to build a model to predict whether a bank note is genuine or not given the attributes of an observation. Logistic Regression is a supervised classification model that models the probability that the observation will be either genuine or counterfeit.
+
+We will ignore K-fold cross-validation of k = 1, since it make the entire dataset to be a testing and validation set at the same time. We will to a K-fold cross validation of k = 10, and compare the accuracies of both models for each fold.
+
+We will also set seed so that our partition is random, and this will remove the chance that our testing data is either all genuine or all counterfeit, thus letting the test be representative.
+
+For each fold, we will conduct LDA and logistic regression:
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 2
+
+lda_accuracy = c()
+lr_accuracy = c()
+
+library(caret)
+
+set.seed(42)
+
+train_control_2 <- trainControl(method="cv", number=2)
+# train the model
+model_lda_2 <- train(Indicator~., data=notes_indc, trControl=train_control_2, method="lda")
+model_lr_2 <- train(Indicator~., data=notes_indc, trControl=train_control_2, method="glm")
+
+# validate model
+predict_lda_2 <- predict(model_lda_2, notes_indc)
+predict_lr_2 <-predict(model_lr_2, notes_indc)
+
+# create confusion matrix
+Indicator_fac <- as.factor(Indicator)
+conf_lda_2 <- confusionMatrix(predict_lda_2, Indicator_fac)
+conf_lr_2 <- confusionMatrix(predict_lr_2, Indicator_fac)
+
+# summarize results and show confusion matrix
+print(model_lda_2)
+print(conf_lda_2)
+
+print(model_lr_2)
+print(conf_lr_2)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_2$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_2$results$Accuracy)
+```
+
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 3
+
+train_control_3 <- trainControl(method="cv", number=3)
+# train the model
+model_lda_3 <- train(Indicator~., data=notes_indc, trControl=train_control_3, method="lda")
+model_lr_3 <- train(Indicator~., data=notes_indc, trControl=train_control_3, method="glm")
+
+# validate model
+predict_lda_3 <- predict(model_lda_3, notes_indc)
+predict_lr_3 <-predict(model_lr_3, notes_indc)
+
+# create confusion matrix
+conf_lda_3 <- confusionMatrix(predict_lda_3, Indicator_fac)
+conf_lr_3 <- confusionMatrix(predict_lr_3, Indicator_fac)
+
+# summarize results and show confusion matrix
+print(model_lda_3)
+print(conf_lda_3)
+
+print(model_lr_3)
+print(conf_lr_3)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_3$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_3$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 4
+
+train_control_4 <- trainControl(method="cv", number=4)
+# train the model
+model_lda_4 <- train(Indicator~., data=notes_indc, trControl=train_control_4, method="lda")
+model_lr_4 <- train(Indicator~., data=notes_indc, trControl=train_control_4, method="glm")
+# validate model
+predict_lda_4 <- predict(model_lda_4, notes_indc)
+predict_lr_4 <-predict(model_lr_4, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_4 <- confusionMatrix(predict_lda_4, Indicator)
+conf_lr_4 <- confusionMatrix(predict_lr_4, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_4)
+print(conf_lda_4)
+
+print(model_lr_4)
+print(conf_lr_4)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_4$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_4$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 5
+
+train_control_5 <- trainControl(method="cv", number=4)
+# train the model
+model_lda_5 <- train(Indicator~., data=notes_indc, trControl=train_control_5, method="lda")
+model_lr_5 <- train(Indicator~., data=notes_indc, trControl=train_control_5, method="glm")
+
+# validate model
+predict_lda_5 <- predict(model_lda_5, notes_indc)
+predict_lr_5 <-predict(model_lr_5, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_5 <- confusionMatrix(predict_lda_5, Indicator)
+conf_lr_5 <- confusionMatrix(predict_lr_5, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_5)
+print(conf_lda_5)
+
+print(model_lr_5)
+print(conf_lr_5)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_5$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_5$results$Accuracy)
+
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 6
+
+train_control_6 <- trainControl(method="cv", number=6)
+# train the model
+model_lda_6 <- train(Indicator~., data=notes_indc, trControl=train_control_6, method="lda")
+model_lr_6 <- train(Indicator~., data=notes_indc, trControl=train_control_6, method="glm")
+
+# validate model
+predict_lda_6 <- predict(model_lda_6, notes_indc)
+predict_lr_6 <-predict(model_lr_6, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_6 <- confusionMatrix(predict_lda_6, Indicator)
+conf_lr_6 <- confusionMatrix(predict_lr_6, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_6)
+print(conf_lda_6)
+
+print(model_lr_6)
+print(conf_lr_6)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_6$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_6$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 7
+
+train_control_7 <- trainControl(method="cv", number=7)
+# train the model
+model_lda_7 <- train(Indicator~., data=notes_indc, trControl=train_control_7, method="lda")
+model_lr_7 <- train(Indicator~., data=notes_indc, trControl=train_control_7, method="glm")
+
+# validate model
+predict_lda_7 <- predict(model_lda_7, notes_indc)
+predict_lr_7 <-predict(model_lr_7, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_7 <- confusionMatrix(predict_lda_7, Indicator)
+conf_lr_7 <- confusionMatrix(predict_lr_7, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_7)
+print(conf_lda_7)
+
+print(model_lr_7)
+print(conf_lr_7)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_7$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_7$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 8
+
+train_control_8 <- trainControl(method="cv", number=8)
+# train the model
+model_lda_8 <- train(Indicator~., data=notes_indc, trControl=train_control_8, method="lda")
+model_lr_8 <- train(Indicator~., data=notes_indc, trControl=train_control_8, method="glm")
+
+# validate model
+predict_lda_8 <- predict(model_lda_8, notes_indc)
+predict_lr_8 <-predict(model_lr_8, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_8 <- confusionMatrix(predict_lda_8, Indicator)
+conf_lr_8 <- confusionMatrix(predict_lr_8, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_8)
+print(conf_lda_8)
+
+print(model_lr_8)
+print(conf_lr_8)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_8$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_8$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 9
+
+train_control_9 <- trainControl(method="cv", number=9)
+# train the model
+model_lda_9 <- train(Indicator~., data=notes_indc, trControl=train_control_9, method="lda")
+model_lr_9 <- train(Indicator~., data=notes_indc, trControl=train_control_9, method="glm")
+
+# validate model
+predict_lda_9 <- predict(model_lda_9, notes_indc)
+predict_lr_9 <-predict(model_lr_9, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_9 <- confusionMatrix(predict_lda_9, Indicator)
+conf_lr_9 <- confusionMatrix(predict_lr_9, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_9)
+print(conf_lda_9)
+
+print(model_lr_9)
+print(conf_lr_9)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_9$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_9$results$Accuracy)
+```
+
+```{r}
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+# k = 10
+
+train_control_10 <- trainControl(method="cv", number=10)
+# train the model
+model_lda_10 <- train(Indicator~., data=notes_indc, trControl=train_control_10, method="lda")
+model_lr_10 <- train(Indicator~., data=notes_indc, trControl=train_control_10, method="glm")
+
+# validate model
+predict_lda_10 <- predict(model_lda_10, notes_indc)
+predict_lr_10 <-predict(model_lr_10, notes_indc)
+
+# create confusion matrix
+Indicator <- as.factor(Indicator)
+conf_lda_10 <- confusionMatrix(predict_lda_10, Indicator)
+conf_lr_10 <- confusionMatrix(predict_lr_10, Indicator)
+
+# summarize results and show confusion matrix
+print(model_lda_10)
+print(conf_lda_10)
+
+print(model_lr_10)
+print(conf_lr_10)
+
+# append accuracies of each method to accuracy list
+lda_accuracy <- c(lda_accuracy, model_lda_10$results$Accuracy)
+lr_accuracy <- c(lr_accuracy, model_lr_10$results$Accuracy)
+```
+```{r}
+num_fold = c(2, 3, 4, 5, 6, 7, 8, 9, 10)
+results = cbind(num_fold, lda_accuracy, lr_accuracy)
+results
+```
+As we can observe from the results of each fold, we are easily able to observe that the Linear Discriminant Analysis consistantly yields a model with an accuracy over 99.49%, whereas the logsitic regression model struggles to consistantly do the same, yielding accuracies varying between 99% and 97.49%.
+
+Therefore from the K-fold cross-validation of 10 folds with LDA model and logistic regression model from each fold, we are able to conclude that LDA is a better model of classification of genuine and counterfeit bank notes.
+
+### Factor Analysis (Maximum Likelihood Estimator)
+Here, we will perform factor analysis on our Swiss Bank Notes dataset through the Maximum Likelihood Estimator (MLE) method. Through factor analysis, we may attempt to remove redundant attributes or attributes that do not impact, or disrupt the decision of the genuinenity of a Swiss Bank Note.
+
+```{r}
+Indicator_int <- c()
+
+for(count in 1:100){
+  Indicator_int <- c(Indicator_int, 1)
+}
+
+for(count in 1:100){
+  Indicator_int <- c(Indicator_int, 0)
+}
+
+notes_indc_int <- cbind(notes, Indicator_int)
+
+mle <- factanal(notes_indc_int, factors = 2, scores = 'regression')
+scores <- mle$scores
+scores <- as.array(scores)
+```
+
+```{r}
+indic <- rep(c(1, 0), each=100)
+mle_indic <- data.frame(scores, Indicator)
+mle_indic
+```
+
+
+### K-fold cross-validation after factor analysis (MLE)
+Here, we will perform the exact same K-fold cross-validation from above, but on the data set that we performed factor analysis on, and compare the outcomes of the models from the cross-validations to see the effects of factor analysis.
+```{r}
+
+mle_lda_accuracy <- c()
+mle_lr_accuracy <- c()
+# K-fold cross-validation using Linear Discriminant Analysis and Logistic Regression
+for(fold in c(2:10)){
+  train_control <- trainControl(method="cv", number=fold)
+  # train the model
+  model_lda <- train(Indicator~., data=mle_indic, trControl=train_control, method="lda")
+  model_lr <- train(Indicator~., data=mle_indic, trControl=train_control, method="glm")
+  
+  # validate model
+  predict_lda <- predict(model_lda, mle_indic)
+  predict_lr <-predict(model_lr, mle_indic)
+  
+  # create confusion matrix
+  Indicator_fac <- as.factor(Indicator)
+  conf_lda <- confusionMatrix(predict_lda, Indicator_fac)
+  conf_lr <- confusionMatrix(predict_lr, Indicator_fac)
+  
+  # summarize results and show confusion matrix
+  print(model_lda)
+  print(conf_lda)
+
+  print(model_lr)
+  print(conf_lr)
+
+  # append accuracies of each method to accuracy list
+  mle_lda_accuracy <- c(mle_lda_accuracy, model_lda$results$Accuracy)
+  mle_lr_accuracy <- c(mle_lr_accuracy, model_lr$results$Accuracy)
+}
+
+```
+
+```{r}
+results = cbind(results, mle_lda_accuracy, mle_lr_accuracy)
+results
+```
+By comparing the results of LDA classification model and logistic regression classification from both before and after the reduction of dimensions through maximum likelihood estimation, we are able to observe that the both classification models show a slightly more accuracy when trained on dataset preprocessed through maximum likelihood estimation, which is done to remove any attributes that are redundant or do not contribute to the outcome, thus excluding over-fitting issues.
+
+Although the increase in accuracy can be seen as a very ignorably small amount, there is a significance in this increase because before MLE, the models would get one or two predictions wrong. However, after the preprocessing of MLE on the dataset, we can see none of those errors.
+
+We can realize from the above comparison that factor analysis does help in increasing the accuracy of models LDA and logistic regression by slight amounts, and therefore factor analysis is definitely not a waste of time. For each folds when training models on raw, unprocessed datasets, LDA is definitely the model that yields the better answer. After preprocessing factor analysis through MLE, both LDA and logistic regression classification models yield similar accuracies. Then the better model would be the logistic regression model.
+
+This is because even though they both yield similar results, the binary logistic regression (BLR) classification model has less constraints on the dataset and conditions. First, the BLR model is not so exigent to the level of the scale and form of distributions in predictors, where as the LDA desires interval levels with multivariate normal distribution. Second, the BLR model has no requirements about within-group covariance matrices of the predictors, where as the LDA covariance matrices should be identical to that of the population. Third, the BLR is much less sensitive to outliers, whereas the LDA is very sensitive to outliers. If any of these conditions that are not easy to satisfy all in reality are not met for LDA, the model has a chance to produce misleading results.
+
+# Conclusion
+Our question was: Can we predict whether a note is false or counterfeit using supervised learning? The answer is yes, through building a model of K-fold cross-validation: implementing Linear Discrimimant Analysis (LDA) and (Binary) Logistic Regression (BLR) for each fold. Both of these models were able to make predictions that very much accurately guess the genuinenity of each bank note. However after factor analyzing the dataset through the Maximum Likelihood estimator and then performing K-fold cross-validation on that processed dataset resulted to show models with even better accuracies. From this Final Project, we are able to conclude that we can predict whether a note is false or counterfeit using supervised learning like LDA and BLR, and also that factor analysis to reduce the dimension and remove and redundancy through MLE, does have a significant effect on increasing the accuracy of the LDA and BLR models from K-fold cross-validation. Therefore, future research could explore specifically which variables are best fitted, redundant, or not needed to predict the genuineity of a bank note to further increase the accuracy with even larger datasets.
+
+However a caveat is that this conclusion does need to be approached with caution since we made 4 assumptions in the beginning of LDA and 1 before MLE. And for our conclusion to hold true, these assumptions must be true.
